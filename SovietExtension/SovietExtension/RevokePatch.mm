@@ -4,8 +4,8 @@
 //
 //  Created by MustangYM on 2026/6/12.
 //
-// 我燃尽了, 宝宝们, 太鸡儿麻烦了, 但我还是想说, 开源共产主义, 爱你们
-//                                   -- MustangYM 2026-6-16
+//  但我还是想说, 开源共产主义, 爱你们
+//         -- MustangYM 2026-6-16
 
 #import "RevokePatch.h"
 #import "AntiUpdate.h"
@@ -16,10 +16,12 @@
 #import <unistd.h>
 #import <string.h>
 #import <stdint.h>
+#import <stdarg.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import "MenuManager.h"
 #import "NSObject+MainHook.h"
+
 #include <string>
 #include <time.h>
 #include <atomic>
@@ -32,7 +34,33 @@ static BOOL YMHasPatchedAntiRevoke = NO;
 // dyld 加载 wechat.dylib 后会赋值。
 static uintptr_t YMWeChatDylibSlide = 0;
 
-#pragma mark - 微信 4.1.9 / 268602 arm64 静态地址
+#pragma mark - MessageWrap 字段布局
+
+/*
+ 当前版本运行时已经验证：
+   rawWrap + 24  = 对方 / 当前聊天会话
+   rawWrap + 48  = 当前登录账号 / 自己
+   rawWrap + 256 = 毫秒级时间戳
+   rawWrap + 276 = 秒级时间戳
+   rawWrap + 328 = content / XML
+ 
+ 以后适配新版时：
+   1. 如果 raw field24 / raw field48 打印正常，一般不用改这里。
+   2. 如果打印乱码、空字符串、插错会话，再重新确认这些偏移。
+ */
+typedef struct {
+    size_t messageWrapSize;
+
+    size_t remoteUserOrSessionOffset;
+    size_t selfUserOffset;
+
+    size_t createTimeMsOffset;
+    size_t createTimeSecOffset;
+
+    size_t contentOffset;
+} YMMessageWrapLayout;
+
+#pragma mark - 微信版本适配配置
 
 /*
  当前适配版本：
@@ -44,31 +72,103 @@ static uintptr_t YMWeChatDylibSlide = 0;
  这些都是 IDA/Hopper 里的静态 VM 地址。
  运行时地址 = YMWeChatDylibSlide + 静态地址。
  */
+typedef struct {
+    const char *displayName;
 
-// ym_HandleSysMsg_RevokeMsg 开头的热补丁函数指针。
-// 汇编：
-//   ADRP X9, #off_91EAD20@PAGE
-//   LDR  X9, [X9,#off_91EAD20@PAGEOFF]
-//   CBZ  X9, loc_27A03B0
-//   BR   X9
-static const uintptr_t kOff_HandleSysMsgRevokeMsgHookPointerVA = 0x91EAD20;//ym_HandleSysMsg_RevokeMsg->
+    const char *bundleID;
+    const char *shortVersion;
+    const char *buildVersion;
 
-// ym_HandleSysMsg_RevokeMsg 原函数里用来构造撤回 MessageWrap 的模板：unk_7861730
-static const uintptr_t kRevokeRawMessageTemplateVA = 0x7861730; //ym_HandleSysMsg_RevokeMsg->
+    uintptr_t hookPointerVA;
+    uintptr_t rawMessageTemplateVA;
+    uintptr_t messageWrapFromRawVA;
+    uintptr_t messageWrapDestructVA;
+    uintptr_t insertPaySysMsgToSessionVA;
 
-// sub_37FB284 / red_envelope_service_handler.cc 里用来构造本地系统消息的模板：unk_7969710
-//static const uintptr_t kLocalSysMessageTemplateVA = 0x7969710;
+    YMMessageWrapLayout layout;
+} YMWeChatAdaptProfile;
 
-// MessageWrap 相关函数
-static const uintptr_t kMessageWrapFromRawVA       = 0x4728670;//ym_HandleSysMsg_RevokeMsg->
-static const uintptr_t kMessageWrapDestructVA      = 0x206F0D0;//ym_HandleSysMsg_RevokeMsg->
-// 现成的本地系统消息插入函数。
-// sub_3822FA4：内部会构造 type=10000 + paymsg XML，然后调用 ym_AddLocalMessageWrap。
-static const uintptr_t kInsertPaySysMsgToSessionVA = 0x3822FA4;//[CDATA[->
+static const YMWeChatAdaptProfile YMAdaptProfiles[] = {
+    {
+        .displayName = "Mac WeChat 4.1.9.58 arm64 / 268602",
+
+        .bundleID = "com.tencent.xinWeChat",
+        .shortVersion = "4.1.9",
+        .buildVersion = "268602",
+
+        // ym_HandleSysMsg_RevokeMsg 开头的热补丁函数指针。
+        // 汇编：
+        //   ADRP X9, #off_91EAD20@PAGE
+        //   LDR  X9, [X9,#off_91EAD20@PAGEOFF]
+        //   CBZ  X9, loc_27A03B0
+        //   BR   X9
+        .hookPointerVA = 0x91EAD20, // ym_HandleSysMsg_RevokeMsg->
+
+        // ym_HandleSysMsg_RevokeMsg 原函数里用来构造撤回 MessageWrap 的模板：unk_7861730
+        .rawMessageTemplateVA = 0x7861730, // ym_HandleSysMsg_RevokeMsg->
+
+        // MessageWrap 相关函数
+        .messageWrapFromRawVA = 0x4728670, // ym_HandleSysMsg_RevokeMsg->
+        .messageWrapDestructVA = 0x206F0D0, // ym_HandleSysMsg_RevokeMsg->
+
+        // 现成的本地系统消息插入函数。
+        // sub_3822FA4：内部会构造 type=10000 + paymsg XML，然后调用 ym_AddLocalMessageWrap。
+        .insertPaySysMsgToSessionVA = 0x3822FA4, // [CDATA]->
+
+        .layout = {
+            .messageWrapSize = 616,
+
+            .remoteUserOrSessionOffset = 24,
+            .selfUserOffset = 48,
+
+            .createTimeMsOffset = 256,
+            .createTimeSecOffset = 276,
+
+            .contentOffset = 328,
+        },
+    },
+
+    /*
+     新版适配示例代码:
+
+     {
+         .displayName = "Mac WeChat 4.1.10 arm64 / xxxxxx",
+
+         .bundleID = "com.tencent.xinWeChat",
+         .shortVersion = "4.1.10",
+         .buildVersion = "新版 CFBundleVersion",
+
+         .hookPointerVA = 新版地址,
+         .rawMessageTemplateVA = 新版地址,
+         .messageWrapFromRawVA = 新版地址,
+         .messageWrapDestructVA = 新版地址,
+         .insertPaySysMsgToSessionVA = 新版地址,
+
+         .layout = {
+             .messageWrapSize = 616,
+
+             .remoteUserOrSessionOffset = 24,
+             .selfUserOffset = 48,
+
+             .createTimeMsOffset = 256,
+             .createTimeSecOffset = 276,
+
+             .contentOffset = 328,
+         },
+     },
+     */
+};
+
+static const size_t YMAdaptProfilesCount = sizeof(YMAdaptProfiles) / sizeof(YMAdaptProfiles[0]);
+
+// 当前运行版本匹配到的配置。
+// 后面所有地址都从这里取，不再写死单个 YMCurrentProfile。
+static const YMWeChatAdaptProfile *YMActiveProfile = NULL;
+
 #pragma mark - 微信内部函数类型
 
-typedef void     (*YMMessageWrapFromRawFunc)(void *message, int64_t rawMessage);
-typedef void     (*YMMessageWrapDestructFunc)(int64_t message);
+typedef void (*YMMessageWrapFromRawFunc)(void *message, int64_t rawMessage);
+typedef void (*YMMessageWrapDestructFunc)(int64_t message);
 
 typedef int64_t (*YMInsertPaySysMsgToSessionFunc)(int64_t a1,
                                                   const std::string *session,
@@ -82,7 +182,7 @@ typedef int64_t (*YMInsertPaySysMsgToSessionFunc)(int64_t a1,
    messageService = v39[0]
    message        = MessageWrap*
  */
-typedef int64_t  (*YMAddLocalMessageWrapFunc)(int64_t messageService, void *message);
+typedef int64_t (*YMAddLocalMessageWrapFunc)(int64_t messageService, void *message);
 
 #pragma mark - 日志
 
@@ -108,36 +208,15 @@ void YMLog(NSString *format, ...) {
     }
 }
 
-#pragma mark - 版本检查
+#pragma mark - 字符串辅助
 
-static BOOL YMIsTargetWeChatVersion(void) {
-    NSBundle *bundle = [NSBundle mainBundle];
-
-    NSString *bundleID = [bundle bundleIdentifier] ?: @"";
-    NSString *shortVersion = [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"";
-    NSString *buildVersion = [bundle objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"";
-
-    YMLog(@"bundleID=%@, version=%@, build=%@", bundleID, shortVersion, buildVersion);
-
-    if (![bundleID isEqualToString:@"com.tencent.xinWeChat"]) {
-        YMLog(@"not target bundle, skip");
-        return NO;
+static NSString *YMNSStringFromCString(const char *cString) {
+    if (!cString) {
+        return @"";
     }
 
-    if (![shortVersion isEqualToString:@"4.1.9"]) {
-        YMLog(@"unsupported short version, skip");
-        return NO;
-    }
-
-    if (![buildVersion isEqualToString:@"268602"]) {
-        YMLog(@"unsupported build version, skip");
-        return NO;
-    }
-
-    return YES;
+    return [NSString stringWithUTF8String:cString] ?: @"";
 }
-
-#pragma mark - C++ std::string 辅助
 
 static std::string YMStdStringFromNSString(NSString *text) {
     if (!text) {
@@ -152,11 +231,133 @@ static std::string YMStdStringFromNSString(NSString *text) {
     return std::string(utf8);
 }
 
+static NSString *YMNSStringFromStdString(const std::string *value) {
+    if (!value) {
+        return @"";
+    }
+
+    const char *cString = NULL;
+
+    try {
+        cString = value->c_str();
+    } catch (...) {
+        return @"";
+    }
+
+    if (!cString) {
+        return @"";
+    }
+
+    return [NSString stringWithUTF8String:cString] ?: @"";
+}
+
+#pragma mark - Profile 匹配
+
+static BOOL YMProfileHasValidAddresses(const YMWeChatAdaptProfile *profile) {
+    if (!profile) {
+        return NO;
+    }
+
+    return profile->hookPointerVA != 0 &&
+           profile->rawMessageTemplateVA != 0 &&
+           profile->messageWrapFromRawVA != 0 &&
+           profile->messageWrapDestructVA != 0 &&
+           profile->insertPaySysMsgToSessionVA != 0 &&
+           profile->layout.messageWrapSize > 0;
+}
+
+static const YMWeChatAdaptProfile *YMFindAdaptProfileForCurrentWeChat(void) {
+    NSBundle *bundle = [NSBundle mainBundle];
+
+    NSString *bundleID = [bundle bundleIdentifier] ?: @"";
+    NSString *shortVersion = [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"";
+    NSString *buildVersion = [bundle objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"";
+
+    YMLog(@"bundleID=%@, version=%@, build=%@", bundleID, shortVersion, buildVersion);
+
+    for (size_t i = 0; i < YMAdaptProfilesCount; i++) {
+        const YMWeChatAdaptProfile *profile = &YMAdaptProfiles[i];
+
+        NSString *expectedBundleID = YMNSStringFromCString(profile->bundleID);
+        NSString *expectedShortVersion = YMNSStringFromCString(profile->shortVersion);
+        NSString *expectedBuildVersion = YMNSStringFromCString(profile->buildVersion);
+
+        if (![bundleID isEqualToString:expectedBundleID]) {
+            continue;
+        }
+
+        if (![shortVersion isEqualToString:expectedShortVersion]) {
+            continue;
+        }
+
+        if (![buildVersion isEqualToString:expectedBuildVersion]) {
+            continue;
+        }
+
+        YMLog(@"matched adapt profile: %s", profile->displayName);
+
+        if (!YMProfileHasValidAddresses(profile)) {
+            YMLog(@"matched profile but addresses are incomplete: %s", profile->displayName);
+            return NULL;
+        }
+
+        return profile;
+    }
+
+    YMLog(@"no adapt profile matched current WeChat version");
+    return NULL;
+}
+
+static const YMWeChatAdaptProfile *YMGetActiveProfile(void) {
+    if (YMActiveProfile) {
+        return YMActiveProfile;
+    }
+
+    YMActiveProfile = YMFindAdaptProfileForCurrentWeChat();
+    return YMActiveProfile;
+}
+
+#pragma mark - 地址辅助
+
+static inline uintptr_t YMRuntimeAddress(uintptr_t staticVA) {
+    if (YMWeChatDylibSlide == 0 || staticVA == 0) {
+        return 0;
+    }
+
+    return YMWeChatDylibSlide + staticVA;
+}
+
+static inline void *YMRuntimePointer(uintptr_t staticVA) {
+    uintptr_t address = YMRuntimeAddress(staticVA);
+    if (address == 0) {
+        return NULL;
+    }
+
+    return (void *)address;
+}
+
+#pragma mark - 版本检查
+
+static BOOL YMIsTargetWeChatVersion(void) {
+    const YMWeChatAdaptProfile *profile = YMGetActiveProfile();
+
+    if (!profile) {
+        YMLog(@"unsupported WeChat version, skip anti revoke");
+        return NO;
+    }
+
+    YMLog(@"current adapt profile=%s", profile->displayName);
+    return YES;
+}
+
+#pragma mark - C++ std::string 辅助
+
 /*
  第一版先默认使用纯文本系统消息。
  老版 WeChatExtension 也是类似逻辑：msgType=10000 + content 文案。
  如果纯文本不显示，再把这里改成 XML 版本测试。
  */
+__attribute__((unused))
 static std::string YMBuildAntiRevokeSystemContent(void) {
     return YMStdStringFromNSString(@"已拦截到一条撤回消息");
 }
@@ -166,6 +367,7 @@ static std::string YMBuildAntiRevokeSystemContent(void) {
  如果纯文本版本插入了但 UI 不显示，可以把 YMBuildAntiRevokeSystemContent()
  里 return 改成这个函数。
  */
+__attribute__((unused))
 static std::string YMBuildAntiRevokeSystemXMLContent(void) {
     std::string text = YMStdStringFromNSString(@"已拦截到一条撤回消息");
 
@@ -193,6 +395,7 @@ static std::string YMBuildAntiRevokeSystemXMLContent(void) {
  这里第一版只用于我们自己栈上临时 shared_ptr 的释放。
  如果测试阶段担心这里有风险，可以临时把调用 YMReleaseSharedPtrStorage 的地方注释掉。
  */
+__attribute__((unused))
 static void YMReleaseSharedPtrStorage(void *storage) {
     if (!storage) {
         return;
@@ -228,6 +431,68 @@ static void YMReleaseSharedPtrStorage(void *storage) {
             ((OnZeroSharedWeakFunc)vtable[3])(controlBlock);
         }
     }
+}
+
+#pragma mark - MessageWrap 字段读取
+
+static std::string *YMRawWrapStringField(void *rawWrap, size_t offset) {
+    if (!rawWrap) {
+        return NULL;
+    }
+
+    return (std::string *)((uint8_t *)rawWrap + offset);
+}
+
+static uint32_t YMRawWrapUInt32Field(void *rawWrap, size_t offset) {
+    if (!rawWrap) {
+        return 0;
+    }
+
+    return *(uint32_t *)((uint8_t *)rawWrap + offset);
+}
+
+static uint64_t YMRawWrapUInt64Field(void *rawWrap, size_t offset) {
+    if (!rawWrap) {
+        return 0;
+    }
+
+    return *(uint64_t *)((uint8_t *)rawWrap + offset);
+}
+
+static NSString *YMFormatTimestamp(uint32_t createTimeSec, uint64_t createTimeMs) {
+    NSTimeInterval messageTimestamp = 0;
+
+    if (createTimeSec > 0) {
+        messageTimestamp = (NSTimeInterval)createTimeSec;
+    } else if (createTimeMs > 0) {
+        messageTimestamp = (NSTimeInterval)(createTimeMs / 1000);
+    } else {
+        messageTimestamp = [[NSDate date] timeIntervalSince1970];
+    }
+
+    NSDate *messageDate = [NSDate dateWithTimeIntervalSince1970:messageTimestamp];
+
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+    formatter.timeZone = [NSTimeZone localTimeZone];
+    formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss";
+
+    return [formatter stringFromDate:messageDate] ?: @"";
+}
+
+static NSString *YMBuildAntiRevokeNoticeText(NSString *remoteUserOrSession,
+                                             NSString *selfUser,
+                                             NSString *messageTimeText,
+                                             int64_t rawRevokeMessage) {
+    /*
+     这里是最终插入聊天流的灰色提示文案。
+     以后如果想精简，可以只保留第一行和消息时间。
+     */
+    return [NSString stringWithFormat:
+            @"⚠️苏维埃已拦截到一条撤回消息⚠️\n撤回方/会话：%@\n消息时间：%@\nraw：0x%llx",
+            remoteUserOrSession ?: @"",
+            messageTimeText ?: @"",
+            (unsigned long long)rawRevokeMessage];
 }
 
 #pragma mark - 内存写入
@@ -298,6 +563,12 @@ static BOOL YMWritePointer(uintptr_t address,
  然后构造自己的 type=10000 MessageWrap 插入本地聊天流。
  */
 static BOOL YMInsertLocalAntiRevokeNotice(int64_t rawRevokeMessage) {
+    const YMWeChatAdaptProfile *profile = YMGetActiveProfile();
+    if (!profile) {
+        YMLog(@"insert local notice failed: no active profile");
+        return NO;
+    }
+
     if (YMWeChatDylibSlide == 0) {
         YMLog(@"insert local notice failed: YMWeChatDylibSlide is zero");
         return NO;
@@ -308,17 +579,23 @@ static BOOL YMInsertLocalAntiRevokeNotice(int64_t rawRevokeMessage) {
         return NO;
     }
 
-    YMLog(@"try insert local anti revoke notice by sub_3822FA4, rawRevokeMessage=0x%llx",
-          (unsigned long long)rawRevokeMessage);
+    YMLog(@"try insert local anti revoke notice by sub_3822FA4, rawRevokeMessage=0x%llx, profile=%s",
+          (unsigned long long)rawRevokeMessage,
+          profile->displayName);
 
     YMMessageWrapFromRawFunc MessageWrapFromRaw =
-    (YMMessageWrapFromRawFunc)(YMWeChatDylibSlide + kMessageWrapFromRawVA);
+    (YMMessageWrapFromRawFunc)YMRuntimePointer(profile->messageWrapFromRawVA);
 
     YMMessageWrapDestructFunc MessageWrapDestruct =
-    (YMMessageWrapDestructFunc)(YMWeChatDylibSlide + kMessageWrapDestructVA);
+    (YMMessageWrapDestructFunc)YMRuntimePointer(profile->messageWrapDestructVA);
 
     YMInsertPaySysMsgToSessionFunc InsertPaySysMsgToSession =
-    (YMInsertPaySysMsgToSessionFunc)(YMWeChatDylibSlide + kInsertPaySysMsgToSessionVA);
+    (YMInsertPaySysMsgToSessionFunc)YMRuntimePointer(profile->insertPaySysMsgToSessionVA);
+
+    if (!MessageWrapFromRaw || !MessageWrapDestruct || !InsertPaySysMsgToSession) {
+        YMLog(@"insert local notice failed: internal function pointer is null");
+        return NO;
+    }
 
     /*
      rawWrap：
@@ -330,22 +607,37 @@ static BOOL YMInsertLocalAntiRevokeNotice(int64_t rawRevokeMessage) {
      目的：
        只为了从 rawWrap 里拿到会话字段。
     */
+    const size_t wrapSize = profile->layout.messageWrapSize;
+
     alignas(16) uint8_t rawWrap[616];
     memset(rawWrap, 0, sizeof(rawWrap));
 
-    void *rawTemplate = (void *)(YMWeChatDylibSlide + kRevokeRawMessageTemplateVA);
-    memcpy(rawWrap, rawTemplate, sizeof(rawWrap));
+    if (wrapSize > sizeof(rawWrap)) {
+        YMLog(@"insert local notice failed: wrapSize too large. wrapSize=%zu", wrapSize);
+        return NO;
+    }
+
+    void *rawTemplate = YMRuntimePointer(profile->rawMessageTemplateVA);
+    if (!rawTemplate) {
+        YMLog(@"insert local notice failed: rawTemplate is null");
+        return NO;
+    }
+
+    memcpy(rawWrap, rawTemplate, wrapSize);
 
     MessageWrapFromRaw(rawWrap, rawRevokeMessage);
 
     BOOL ok = NO;
 
     try {
-        std::string *rawField24 = (std::string *)(rawWrap + 24);
-        std::string *rawField48 = (std::string *)(rawWrap + 48);
+        std::string *rawField24 = YMRawWrapStringField(rawWrap, profile->layout.remoteUserOrSessionOffset);
+        std::string *rawField48 = YMRawWrapStringField(rawWrap, profile->layout.selfUserOffset);
 
-        YMLog(@"raw field24=%s", rawField24->c_str());
-        YMLog(@"raw field48=%s", rawField48->c_str());
+        NSString *remoteUserOrSessionText = YMNSStringFromStdString(rawField24);
+        NSString *selfUserText = YMNSStringFromStdString(rawField48);
+
+        YMLog(@"raw field24=%s", rawField24 ? rawField24->c_str() : "");
+        YMLog(@"raw field48=%s", rawField48 ? rawField48->c_str() : "");
 
         /*
          从实际测试结果看：
@@ -359,61 +651,47 @@ static BOOL YMInsertLocalAntiRevokeNotice(int64_t rawRevokeMessage) {
 
         std::string *session = remoteUserOrSession;
 
-        if (session->empty()) {
+        if (!session || session->empty()) {
             YMLog(@"rawField24 is empty, fallback to rawField48");
             session = rawField48;
         }
 
-        if (session->empty()) {
+        if (!session || session->empty()) {
             YMLog(@"insert local notice failed: session is empty");
             MessageWrapDestruct((int64_t)rawWrap);
             return NO;
         }
 
-        uint32_t rawCreateTimeSec = *(uint32_t *)(rawWrap + 276);
-        uint64_t rawCreateTimeMs  = *(uint64_t *)(rawWrap + 256);
+        uint32_t rawCreateTimeSec = YMRawWrapUInt32Field(rawWrap, profile->layout.createTimeSecOffset);
+        uint64_t rawCreateTimeMs  = YMRawWrapUInt64Field(rawWrap, profile->layout.createTimeMsOffset);
 
-        NSTimeInterval messageTimestamp = 0;
+        NSString *messageTimeText = YMFormatTimestamp(rawCreateTimeSec, rawCreateTimeMs);
 
-        if (rawCreateTimeSec > 0) {
-            messageTimestamp = (NSTimeInterval)rawCreateTimeSec;
-        } else if (rawCreateTimeMs > 0) {
-            messageTimestamp = (NSTimeInterval)(rawCreateTimeMs / 1000);
-        } else {
-            messageTimestamp = [[NSDate date] timeIntervalSince1970];
-        }
-
-        NSDate *messageDate = [NSDate dateWithTimeIntervalSince1970:messageTimestamp];
-
-        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-        formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
-        formatter.timeZone = [NSTimeZone localTimeZone];
-        formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss";
-
-        NSString *messageTimeText = [formatter stringFromDate:messageDate];
-
-        NSString *noticeText = [NSString stringWithFormat:
-                                @"⚠️苏维埃已拦截到一条撤回消息⚠️\n撤回方/会话：%s\n消息时间：%@\nraw：0x%llx",
-                                remoteUserOrSession->c_str(),
-                                messageTimeText,
-                                (unsigned long long)rawRevokeMessage];
+        NSString *noticeText = YMBuildAntiRevokeNoticeText(remoteUserOrSessionText,
+                                                           selfUserText,
+                                                           messageTimeText,
+                                                           rawRevokeMessage);
 
         std::string content = YMStdStringFromNSString(noticeText);
 
+        YMLog(@"raw createTimeSec=%u", rawCreateTimeSec);
+        YMLog(@"raw createTimeMs=%llu", (unsigned long long)rawCreateTimeMs);
+        YMLog(@"message time=%@", messageTimeText);
+
         YMLog(@"insert notice session=%s", session->c_str());
-        YMLog(@"insert notice remoteUserOrSession=%s", remoteUserOrSession->c_str());
-        YMLog(@"insert notice selfUser=%s", selfUser->c_str());
+        YMLog(@"insert notice remoteUserOrSession=%s", remoteUserOrSession ? remoteUserOrSession->c_str() : "");
+        YMLog(@"insert notice selfUser=%s", selfUser ? selfUser->c_str() : "");
         YMLog(@"insert notice content=%s", content.c_str());
-        YMLog(@"call sub_3822FA4 at 0x%lx",
-              (unsigned long)(YMWeChatDylibSlide + kInsertPaySysMsgToSessionVA));
+        YMLog(@"call insertPaySysMsgToSession at 0x%lx",
+              (unsigned long)YMRuntimeAddress(profile->insertPaySysMsgToSessionVA));
 
         int64_t result = InsertPaySysMsgToSession(0, session, &content);
 
-        YMLog(@"sub_3822FA4 result=0x%llx", (unsigned long long)result);
+        YMLog(@"insertPaySysMsgToSession result=0x%llx", (unsigned long long)result);
 
         ok = YES;
     } catch (...) {
-        YMLog(@"exception while calling sub_3822FA4 insert local notice");
+        YMLog(@"exception while calling insertPaySysMsgToSession insert local notice");
         ok = NO;
     }
 
@@ -421,6 +699,7 @@ static BOOL YMInsertLocalAntiRevokeNotice(int64_t rawRevokeMessage) {
 
     return ok;
 }
+
 #pragma mark - 撤回入口 Hook
 
 /*
@@ -453,17 +732,20 @@ static BOOL YMPatchAntiRevokeWithSlide(intptr_t slide, NSString *source) {
         return YES;
     }
 
-    if (!YMIsTargetWeChatVersion()) {
+    const YMWeChatAdaptProfile *profile = YMGetActiveProfile();
+    if (!profile) {
+        YMLog(@"no active profile, skip patch");
         return NO;
     }
 
     YMWeChatDylibSlide = (uintptr_t)slide;
 
-    uintptr_t pointerAddress = YMWeChatDylibSlide + kOff_HandleSysMsgRevokeMsgHookPointerVA;
+    uintptr_t pointerAddress = YMRuntimeAddress(profile->hookPointerVA);
     uintptr_t hookAddress = (uintptr_t)&YMHandleSysMsgRevokeMsgHook;
 
-    YMLog(@"try install revoke hook from %@, slide=0x%lx, pointer=0x%lx, hook=0x%lx",
+    YMLog(@"try install revoke hook from %@, profile=%s, slide=0x%lx, pointer=0x%lx, hook=0x%lx",
           source,
+          profile->displayName,
           (unsigned long)YMWeChatDylibSlide,
           (unsigned long)pointerAddress,
           (unsigned long)hookAddress);
@@ -480,13 +762,28 @@ static BOOL YMPatchAntiRevokeWithSlide(intptr_t slide, NSString *source) {
     BOOL ok = YMWritePointer(pointerAddress,
                              hookAddress,
                              0,
-                             "off_91EAD20 -> YMHandleSysMsgRevokeMsgHook");
+                             "revoke hook pointer -> YMHandleSysMsgRevokeMsgHook");
 
     if (ok) {
         YMHasPatchedAntiRevoke = YES;
     }
 
     return ok;
+}
+
+#pragma mark - dyld 查找 wechat.dylib
+
+static BOOL YMIsTargetWeChatResourceDylibPath(NSString *imagePath) {
+    if (imagePath.length == 0) {
+        return NO;
+    }
+
+    BOOL isTarget =
+    [imagePath hasSuffix:@"/Contents/Resources/wechat.dylib"] ||
+    ([imagePath containsString:@"/Contents/Resources/"] &&
+     [[imagePath lastPathComponent] isEqualToString:@"wechat.dylib"]);
+
+    return isTarget;
 }
 
 static BOOL YMFindAndPatchLoadedWeChatResourceDylib(void) {
@@ -502,12 +799,7 @@ static BOOL YMFindAndPatchLoadedWeChatResourceDylib(void) {
 
         NSString *imagePath = [NSString stringWithUTF8String:name];
 
-        BOOL isTarget =
-        [imagePath hasSuffix:@"/Contents/Resources/wechat.dylib"] ||
-        ([imagePath containsString:@"/Contents/Resources/"] &&
-         [[imagePath lastPathComponent] isEqualToString:@"wechat.dylib"]);
-
-        if (!isTarget) {
+        if (!YMIsTargetWeChatResourceDylibPath(imagePath)) {
             continue;
         }
 
@@ -554,12 +846,7 @@ static void YMDyldImageAdded(const struct mach_header *mh, intptr_t vmaddr_slide
 
     NSString *imagePath = [NSString stringWithUTF8String:name];
 
-    BOOL isTarget =
-    [imagePath hasSuffix:@"/Contents/Resources/wechat.dylib"] ||
-    ([imagePath containsString:@"/Contents/Resources/"] &&
-     [[imagePath lastPathComponent] isEqualToString:@"wechat.dylib"]);
-
-    if (!isTarget) {
+    if (!YMIsTargetWeChatResourceDylibPath(imagePath)) {
         return;
     }
 
@@ -568,6 +855,60 @@ static void YMDyldImageAdded(const struct mach_header *mh, intptr_t vmaddr_slide
           (unsigned long)vmaddr_slide);
 
     YMPatchAntiRevokeWithSlide(vmaddr_slide, @"dyld add image callback");
+}
+
+#pragma mark - 功能安装
+
+static void YMInstallAssistantMenu(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [[MenuManager shareInstance] initAssistantMenuItems];
+    });
+}
+
+static void YMInstallAntiUpdateIfNeeded(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        NSString *loadFlag = [[NSUserDefaults standardUserDefaults] objectForKey:kIsFirstLoad];
+        if (loadFlag.length < 3) {
+            [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kAntiUpdate];
+            [[NSUserDefaults standardUserDefaults] setObject:@"SOVIET" forKey:kIsFirstLoad];
+        }
+
+        if ([[NSUserDefaults standardUserDefaults] boolForKey:kAntiUpdate]) {
+            YMDisableSparkleAutoUpdateDefaults();
+            YMDisableSparkleByRuntimeHook();
+        }
+    });
+}
+
+static void YMInstallAntiRevokeIfNeeded(void) {
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:kAntiRevoke]) {
+        YMLog(@"anti revoke disabled by user defaults, skip");
+        return;
+    }
+
+    /*
+     先注册 dyld 回调。
+     如果 wechat.dylib 在我们之后加载，可以第一时间拿到 slide。
+    */
+    _dyld_register_func_for_add_image(YMDyldImageAdded);
+
+    /*
+     再主动扫描一次。
+     如果 wechat.dylib 在我们之前已经加载，可以直接安装 hook。
+    */
+    YMInstallAntiRevokePatch();
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        YMInstallAntiRevokePatch();
+    });
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        YMInstallAntiRevokePatch();
+    });
 }
 
 #pragma mark - constructor
