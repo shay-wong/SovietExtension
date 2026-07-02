@@ -12,41 +12,19 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #import "RevokePatch.h"
-
-#pragma mark - UserDefaults Keys
-
-/// 是否启用迷离模式。
-static NSString * const kYMThemeMistyMode = @"kThemeMistyMode.SOVIET";
-
-/// QNSView 透明度。1.0 = 不透明；越小越透。
-static NSString * const kYMThemeMistyQNSAlpha = @"kThemeMistyQNSAlpha.SOVIET";
-
-/// 是否启用 WindowServer 背景模糊。
-static NSString * const kYMThemeMistyWindowBlurEnabled = @"kThemeMistyWindowBlurEnabled.SOVIET";
-
-/// 背景模糊半径。
-static NSString * const kYMThemeMistyWindowBlurRadius = @"kThemeMistyWindowBlurRadius.SOVIET";
-
-/// carrier 风格：dark / light。
-static NSString * const kYMThemeMistyCarrierStyle = @"kThemeMistyCarrierStyle.SOVIET";
-static NSString * const kYMThemeMistyCarrierStyleDark = @"dark";
-static NSString * const kYMThemeMistyCarrierStyleLight = @"light";
-
-/// 是否定期重新应用 blur。
-static NSString * const kYMThemeMistyKeepAlive = @"kThemeMistyKeepAlive.SOVIET";
+#import "MistyModeSettingsWindowController.h"
+#import "MenuManager.h"
 
 #pragma mark - 默认值
 
-static const BOOL kYMDefaultMistyModeEnabled = YES;
+static const BOOL kYMDefaultMistyModeEnabled = NO;
 static const CGFloat kYMDefaultQNSViewAlphaValue = 0.90f;
 static const BOOL kYMDefaultWindowBackgroundBlurEnabled = YES;
-static const int kYMDefaultWindowBackgroundBlurRadius = 35;
+static const int kYMDefaultWindowBackgroundBlurRadius = 10;
 static const BOOL kYMDefaultBlurKeepAliveEnabled = YES;
 static NSString * const kYMDefaultCarrierStyle = @"dark";
 
-/// 用户不直接设置这个值。
-/// 深色 carrier：你测试出的最佳值 0.3。
-/// 浅色 carrier：你测试出的最佳值 0.015。
+//手动调试出来这个效果
 static const CGFloat kYMCarrierAlphaDark = 0.30f;
 static const CGFloat kYMCarrierAlphaLight = 0.015f;
 
@@ -95,12 +73,12 @@ static char kYMAppliedBlurWindowNumberAssociatedKey;
 
 static void YMRegisterMistyThemeDefaults(void) {
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
-        kYMThemeMistyMode: @(kYMDefaultMistyModeEnabled),
-        kYMThemeMistyQNSAlpha: @(kYMDefaultQNSViewAlphaValue),
-        kYMThemeMistyWindowBlurEnabled: @(kYMDefaultWindowBackgroundBlurEnabled),
-        kYMThemeMistyWindowBlurRadius: @(kYMDefaultWindowBackgroundBlurRadius),
-        kYMThemeMistyCarrierStyle: kYMDefaultCarrierStyle,
-        kYMThemeMistyKeepAlive: @(kYMDefaultBlurKeepAliveEnabled),
+        kThemeMistyMode: @(kYMDefaultMistyModeEnabled),
+        kThemeMistyQNSAlpha: @(kYMDefaultQNSViewAlphaValue),
+        kThemeMistyWindowBlurEnabled: @(kYMDefaultWindowBackgroundBlurEnabled),
+        kThemeMistyWindowBlurRadius: @(kYMDefaultWindowBackgroundBlurRadius),
+        kThemeMistyCarrierStyle: kYMDefaultCarrierStyle,
+        kThemeMistyKeepAlive: @(kYMDefaultBlurKeepAliveEnabled),
     }];
 }
 
@@ -137,12 +115,12 @@ static NSString *YMStringSetting(NSString *key, NSString *defaultValue) {
 }
 
 static BOOL YMMistyModeEnabled(void) {
-    return YMBoolSetting(kYMThemeMistyMode, kYMDefaultMistyModeEnabled);
+    return YMBoolSetting(kThemeMistyMode, kYMDefaultMistyModeEnabled);
 }
 
 static BOOL YMWindowBackgroundBlurEnabled(void) {
     if (!YMMistyModeEnabled()) return NO;
-    return YMBoolSetting(kYMThemeMistyWindowBlurEnabled, kYMDefaultWindowBackgroundBlurEnabled);
+    return YMBoolSetting(kThemeMistyWindowBlurEnabled, kYMDefaultWindowBackgroundBlurEnabled);
 }
 
 static CGFloat YMQNSViewAlphaValue(void) {
@@ -150,7 +128,7 @@ static CGFloat YMQNSViewAlphaValue(void) {
         return 1.0f;
     }
 
-    CGFloat alpha = YMFloatSetting(kYMThemeMistyQNSAlpha, kYMDefaultQNSViewAlphaValue);
+    CGFloat alpha = YMFloatSetting(kThemeMistyQNSAlpha, kYMDefaultQNSViewAlphaValue);
     alpha = MAX(0.20f, MIN(1.0f, alpha));
     return alpha;
 }
@@ -160,18 +138,18 @@ static int YMWindowBackgroundBlurRadius(void) {
         return 0;
     }
 
-    NSInteger radius = YMIntegerSetting(kYMThemeMistyWindowBlurRadius, kYMDefaultWindowBackgroundBlurRadius);
+    NSInteger radius = YMIntegerSetting(kThemeMistyWindowBlurRadius, kYMDefaultWindowBackgroundBlurRadius);
     radius = MAX(0, MIN(100, radius));
     return (int)radius;
 }
 
 static BOOL YMBlurKeepAliveEnabled(void) {
-    return YMBoolSetting(kYMThemeMistyKeepAlive, kYMDefaultBlurKeepAliveEnabled);
+    return YMBoolSetting(kThemeMistyKeepAlive, kYMDefaultBlurKeepAliveEnabled);
 }
 
 static BOOL YMCarrierStyleIsDark(void) {
-    NSString *style = YMStringSetting(kYMThemeMistyCarrierStyle, kYMDefaultCarrierStyle);
-    return ![style isEqualToString:kYMThemeMistyCarrierStyleLight];
+    NSString *style = YMStringSetting(kThemeMistyCarrierStyle, kYMDefaultCarrierStyle);
+    return ![style isEqualToString:kThemeMistyCarrierStyleLight];
 }
 
 static CGFloat YMWindowBlurCarrierAlpha(void) {
@@ -193,73 +171,57 @@ static BOOL YMIsQNSView(NSView *view) {
     return [view isKindOfClass:qnsClass];
 }
 
-/// 递归查找指定 view 树里是否存在 QNSView。
-/// 只要窗口里没有 QNSView，就绝对不是微信 Qt 主界面窗口，不能套迷离模式。
-static BOOL YMViewTreeContainsQNSView(NSView *view) {
-    if (!view) return NO;
 
-    if (YMIsQNSView(view)) {
+#pragma mark - 工具：窗口过滤
+
+/// 只排除 macOS 顶部状态栏图标、菜单、popover、tooltip 这类明显不该处理的小窗口。
+/// 不再用 NSPanel / 非 normal level / 大尺寸窗口作为强过滤条件，避免误伤微信登录窗口。
+///
+/// 说明：
+/// - 登录窗口可能不是普通主窗口，也可能暂时没有 QNSView，所以不能要求“必须包含 QNSView”。
+/// - 状态栏图标、菜单窗口通常类名包含 Status/Menu/Popover/Tooltip，或者尺寸非常小。
+static BOOL YMShouldSkipMistyEffectForWindow(NSWindow *window) {
+    if (!window) {
         return YES;
     }
 
-    NSArray<NSView *> *subviews = [view.subviews copy];
-    for (NSView *subview in subviews) {
-        if (YMViewTreeContainsQNSView(subview)) {
+    NSString *className = NSStringFromClass(window.class);
+    NSArray<NSString *> *blockedKeywords = @[
+        @"Status",
+        @"Menu",
+        @"Popover",
+        @"Tooltip",
+        @"TouchBar"
+    ];
+
+    for (NSString *keyword in blockedKeywords) {
+        if ([className rangeOfString:keyword options:NSCaseInsensitiveSearch].location != NSNotFound) {
             return YES;
         }
+    }
+
+    // AppKit 的菜单 / 状态栏相关窗口常见窗口层级。
+    // 不用“非 NSNormalWindowLevel 一律跳过”，因为微信登录窗口在某些状态下可能不是普通 level。
+    NSInteger level = window.level;
+    if (level == NSMainMenuWindowLevel ||
+        level == NSStatusWindowLevel ||
+        level == NSPopUpMenuWindowLevel) {
+        return YES;
+    }
+
+    NSRect frame = window.frame;
+
+    // 顶部状态栏图标、菜单承载窗口一般非常小。
+    // 这里阈值故意放低，避免把微信登录窗口误判掉。
+    if (frame.size.width < 220.0 || frame.size.height < 120.0) {
+        return YES;
     }
 
     return NO;
 }
 
-static BOOL YMShouldApplyMistyEffectToWindow(NSWindow *window, NSView *specificQNSView) {
-    if (!window || !window.contentView) {
-        return NO;
-    }
-
-    // 菜单栏图标、菜单、popover、tooltip 通常不是 normal level。
-    // 微信主窗口 / 聊天窗口一般是 NSNormalWindowLevel。
-    if (window.level != NSNormalWindowLevel) {
-        return NO;
-    }
-
-    NSString *windowClassName = NSStringFromClass(window.class);
-    NSArray<NSString *> *blockedClassKeywords = @[
-        @"Status",
-        @"Menu",
-        @"Popover",
-        @"Tooltip",
-        @"Toolbar",
-        @"TouchBar",
-        @"Panel"
-    ];
-
-    for (NSString *keyword in blockedClassKeywords) {
-        if ([windowClassName rangeOfString:keyword options:NSCaseInsensitiveSearch].location != NSNotFound) {
-            return NO;
-        }
-    }
-
-    // 顶部菜单栏图标 / 状态栏相关窗口尺寸通常很小。
-    // 微信主窗口和独立聊天窗口一般远大于这个阈值。
-    NSRect frame = window.frame;
-    if (frame.size.width < 360.0 || frame.size.height < 360.0) {
-        return NO;
-    }
-
-    if (specificQNSView) {
-        if (!YMIsQNSView(specificQNSView)) {
-            return NO;
-        }
-
-        if (specificQNSView.window != window) {
-            return NO;
-        }
-
-        return YES;
-    }
-
-    return YMViewTreeContainsQNSView(window.contentView);
+static BOOL YMShouldApplyMistyEffectForWindow(NSWindow *window) {
+    return !YMShouldSkipMistyEffectForWindow(window);
 }
 
 #pragma mark - 工具：CGS 背景模糊
@@ -371,8 +333,13 @@ static void YMMakeWindowTransparent(NSWindow *window) {
 
     window.opaque = NO;
 
+    // 不再插入额外 overlay view。
+    // 这里用 window 自己的背景色作为 blur carrier。
+    // 深色模式内部 alpha = 0.3；浅色模式内部 alpha = 0.015。
     window.backgroundColor = YMWindowBlurCarrierColor();
 
+    // 保留阴影，整体观感更像系统窗口。
+    // window.hasShadow = YES;
 
     YMApplyWindowBackgroundBlur(window);
 }
@@ -396,6 +363,8 @@ static void YMMakeContainerBlurCarrier(NSView *container) {
     container.wantsLayer = YES;
     container.layer.opaque = NO;
 
+    // 不用额外 view，而是让 contentView / QNSView 父容器自己提供 blur carrier。
+    // 这样 QNSView 内部完全透明的区域，例如最左侧工具栏，也能看到 WindowServer blur。
     container.layer.backgroundColor = YMWindowBlurCarrierColor().CGColor;
 }
 
@@ -416,9 +385,9 @@ static void YMInstallBlurBackgroundBehindQNSView(NSView *qnsView) {
         NSWindow *window = qnsView.window;
         if (!window) return;
 
-        // 只处理真正的微信主界面 / 聊天界面窗口。
-        // 避免误伤 macOS 菜单栏顶部的微信图标、菜单窗口、popover、设置窗口等。
-        if (!YMShouldApplyMistyEffectToWindow(window, qnsView)) {
+        // 只跳过 macOS 顶部状态栏图标、菜单、popover 等附属窗口。
+        // 不跳过登录窗口，避免登录界面的迷离效果失效。
+        if (!YMShouldApplyMistyEffectForWindow(window)) {
             return;
         }
 
@@ -433,7 +402,6 @@ static void YMInstallBlurBackgroundBehindQNSView(NSView *qnsView) {
         YMMakeWindowTransparent(window);
         YMMakeContainerBlurCarrier(container);
         YMMakeViewTransparent(qnsView);
-
     }
     @finally {
         gYMApplyingBlurBackground = NO;
@@ -478,14 +446,13 @@ static void YMRefreshAllWindows(void) {
     YMRegisterMistyThemeDefaults();
 
     for (NSWindow *window in NSApp.windows) {
-        if (!YMShouldApplyMistyEffectToWindow(window, nil)) {
+        if (!YMShouldApplyMistyEffectForWindow(window)) {
             continue;
         }
 
         YMMakeWindowTransparent(window);
 
-        // 只给真正的微信 Qt 主窗口设置 blur carrier。
-        // 这样不会影响 macOS 菜单栏顶部的微信图标 / 菜单 / popover。
+        // window.contentView 本身也设成 blur carrier，保证还没找到 QNSView 时也能先有承载面。
         YMMakeContainerBlurCarrier(window.contentView);
 
         YMRefreshViewTree(window.contentView);
@@ -518,21 +485,17 @@ static void YMStartBlurKeepAliveIfNeeded(void) {
 #pragma mark - Runtime Hook：QNSView
 
 static BOOL YM_QNSView_isOpaque(id self, SEL _cmd) {
-    // 不要对所有 QNSView 都强制返回 NO。
-    // 菜单栏图标 / 小窗口里如果也有 QNSView，强制非 opaque 也可能造成异常透明。
     if ([self isKindOfClass:[NSView class]]) {
-        NSView *view = (NSView *)self;
-        NSWindow *window = view.window;
-        if (YMShouldApplyMistyEffectToWindow(window, view)) {
-            return NO;
+        NSWindow *window = ((NSView *)self).window;
+        if (window && !YMShouldApplyMistyEffectForWindow(window)) {
+            if (gOrig_QNSView_isOpaque) {
+                return gOrig_QNSView_isOpaque(self, _cmd);
+            }
+            return YES;
         }
     }
 
-    if (gOrig_QNSView_isOpaque) {
-        return gOrig_QNSView_isOpaque(self, _cmd);
-    }
-
-    return YES;
+    return NO;
 }
 
 static void YM_QNSView_viewDidMoveToWindow(id self, SEL _cmd) {
@@ -561,10 +524,13 @@ static void YM_QNSView_setLayer(id self, SEL _cmd, id layer) {
     }
 
     if ([self isKindOfClass:[NSView class]]) {
-        // 不在这里直接改 alpha。
-        // setLayer: 可能发生在菜单栏图标 / 小窗口里的 QNSView 上，统一交给
-        // YMInstallBlurBackgroundBehindQNSView 内部的窗口过滤逻辑判断。
-        YMInstallBlurBackgroundBehindQNSViewAsync((NSView *)self);
+        NSView *view = (NSView *)self;
+        NSWindow *window = view.window;
+
+        if (!window || YMShouldApplyMistyEffectForWindow(window)) {
+            YMMakeViewTransparent(view);
+            YMInstallBlurBackgroundBehindQNSViewAsync(view);
+        }
     }
 }
 
@@ -656,7 +622,6 @@ static void YMInstallQNSViewHooks(void) {
         YMStartBlurKeepAliveIfNeeded();
 
         // 微信 / Qt 有些窗口和 layer 会延后创建，所以延迟再刷几次。
-        // 注意：YMInstallQNSViewHooks 内部已经防重复。
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             YMInstallQNSViewHooks();
             YMRefreshAllWindows();
