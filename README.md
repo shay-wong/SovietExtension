@@ -28,7 +28,7 @@
 
 > 🔞→嗳丄了祢℡ωǒ…吥徻↘後悔∵╭→很嗳﹎∩ 答应 ↘永逺┈⊕┈与∩ì.在∟┅ ↑起❤️
 <p align="center">
-  <img src="./colorful.gif" width="1000" alt="SovietExtension Effect 1" />
+  <img src="./colorful1.gif" width="1000" alt="SovietExtension Effect 1" />
 </p>
 
 <p align="center">
