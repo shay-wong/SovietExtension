@@ -83,7 +83,7 @@ static BOOL YMMistySettingsUseLightAppearanceFromCurrentAppearance(void) {
 
 + (NSPanel *)ym_createPanel
 {
-    NSRect frame = NSMakeRect(0, 0, 560, 760);
+    NSRect frame = NSMakeRect(0, 0, 560, 820);
     NSWindowStyleMask styleMask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
 
     NSPanel *panel = [[NSPanel alloc] initWithContentRect:frame
@@ -136,148 +136,153 @@ static BOOL YMMistySettingsUseLightAppearanceFromCurrentAppearance(void) {
     self.backgroundEffectView = effect;
     [contentView addSubview:effect];
 
-    NSTextField *titleLabel = [self ym_labelWithFrame:NSMakeRect(32, 704, 300, 28)
+    NSTextField *titleLabel = [self ym_labelWithFrame:NSMakeRect(32, 764, 300, 28)
                                                 text:@"迷离模式"
                                                 font:[NSFont systemFontOfSize:22 weight:NSFontWeightSemibold]
                                                color:[NSColor colorWithCalibratedWhite:0.98 alpha:1.0]];
     [contentView addSubview:titleLabel];
 
-    NSTextField *subtitleLabel = [self ym_labelWithFrame:NSMakeRect(32, 676, 460, 20)
+    NSTextField *subtitleLabel = [self ym_labelWithFrame:NSMakeRect(32, 736, 460, 20)
                                                    text:@"调节透明、模糊与流光氛围，自动跟随微信深浅外观"
                                                    font:[NSFont systemFontOfSize:12 weight:NSFontWeightRegular]
                                                   color:[NSColor colorWithCalibratedWhite:0.72 alpha:1.0]];
     [contentView addSubview:subtitleLabel];
 
-    self.colorfulCard = [self ym_cardViewWithFrame:NSMakeRect(24, 394, 512, 252)];
+    self.colorfulCard = [self ym_cardViewWithFrame:NSMakeRect(24, 424, 512, 292)];
     NSView *colorfulCard = self.colorfulCard;
     [contentView addSubview:colorfulCard];
 
-    self.colorfulCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(26, 208, 220, 24)];
+    self.colorfulCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(26, 248, 220, 24)];
     self.colorfulCheckbox.buttonType = NSSwitchButton;
     self.colorfulCheckbox.title = @"启用流光氛围";
     self.colorfulCheckbox.font = [NSFont systemFontOfSize:14 weight:NSFontWeightMedium];
     self.colorfulCheckbox.target = self;
     self.colorfulCheckbox.action = @selector(liveThemeControlChanged:);
     [colorfulCard addSubview:self.colorfulCheckbox];
-    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(48, 186, 420, 18)
+    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(48, 226, 420, 18)
                                                 text:@"在玻璃模糊层中加入缓慢流动的柔和彩色光晕，增强空间层次。"
                                                 font:[NSFont systemFontOfSize:11 weight:NSFontWeightRegular]
                                                color:[NSColor colorWithCalibratedWhite:0.62 alpha:1.0]]];
 
-    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 150, 160, 20)
+    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 190, 160, 20)
                                                 text:@"流光强度"
                                                 font:[NSFont systemFontOfSize:13 weight:NSFontWeightMedium]
                                                color:[NSColor colorWithCalibratedWhite:0.92 alpha:1.0]]];
-    self.colorfulOpacityValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 150, 52, 20)
+    self.colorfulOpacityValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 190, 52, 20)
                                                        text:@"42%"
                                                        font:[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightMedium]
                                                       color:[NSColor colorWithCalibratedWhite:0.86 alpha:1.0]];
     self.colorfulOpacityValueLabel.alignment = NSTextAlignmentRight;
     [colorfulCard addSubview:self.colorfulOpacityValueLabel];
 
-    self.colorfulOpacitySlider = [[NSSlider alloc] initWithFrame:NSMakeRect(26, 124, 456, 24)];
+    self.colorfulOpacitySlider = [[NSSlider alloc] initWithFrame:NSMakeRect(26, 164, 456, 24)];
     self.colorfulOpacitySlider.minValue = 0.0;
     self.colorfulOpacitySlider.maxValue = 1.0;
     self.colorfulOpacitySlider.target = self;
     self.colorfulOpacitySlider.action = @selector(colorfulSliderChanged:);
     [colorfulCard addSubview:self.colorfulOpacitySlider];
-    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 104, 456, 18)
+    [self ym_addCupHintLabelsForSlider:self.colorfulOpacitySlider inView:colorfulCard];
+    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 130, 456, 18)
                                                 text:@"控制流光背景的整体存在感；数值越高，彩色光晕越明显。"
                                                 font:[NSFont systemFontOfSize:11 weight:NSFontWeightRegular]
                                                color:[NSColor colorWithCalibratedWhite:0.62 alpha:1.0]]];
 
-    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 72, 160, 20)
+    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 98, 160, 20)
                                                 text:@"流光大小"
                                                 font:[NSFont systemFontOfSize:13 weight:NSFontWeightMedium]
                                                color:[NSColor colorWithCalibratedWhite:0.92 alpha:1.0]]];
-    self.colorfulBlurRadiusValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 72, 52, 20)
+    self.colorfulBlurRadiusValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 98, 52, 20)
                                                           text:@"70"
                                                           font:[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightMedium]
                                                          color:[NSColor colorWithCalibratedWhite:0.86 alpha:1.0]];
     self.colorfulBlurRadiusValueLabel.alignment = NSTextAlignmentRight;
     [colorfulCard addSubview:self.colorfulBlurRadiusValueLabel];
 
-    self.colorfulBlurRadiusSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(26, 46, 456, 24)];
+    self.colorfulBlurRadiusSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(26, 72, 456, 24)];
     self.colorfulBlurRadiusSlider.minValue = kYMColorfulBlurRadiusMinValue;
     self.colorfulBlurRadiusSlider.maxValue = kYMColorfulBlurRadiusMaxValue;
     self.colorfulBlurRadiusSlider.target = self;
     self.colorfulBlurRadiusSlider.action = @selector(colorfulSliderChanged:);
     [colorfulCard addSubview:self.colorfulBlurRadiusSlider];
+    [self ym_addCupHintLabelsForSlider:self.colorfulBlurRadiusSlider inView:colorfulCard];
 
-    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 16, 160, 20)
+    [colorfulCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 28, 160, 20)
                                                 text:@"流动速度"
                                                 font:[NSFont systemFontOfSize:13 weight:NSFontWeightMedium]
                                                color:[NSColor colorWithCalibratedWhite:0.92 alpha:1.0]]];
-    self.colorfulAnimationDurationValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 16, 52, 20)
+    self.colorfulAnimationDurationValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 28, 52, 20)
                                                                  text:@"10s"
                                                                  font:[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightMedium]
                                                                 color:[NSColor colorWithCalibratedWhite:0.86 alpha:1.0]];
     self.colorfulAnimationDurationValueLabel.alignment = NSTextAlignmentRight;
     [colorfulCard addSubview:self.colorfulAnimationDurationValueLabel];
 
-    self.colorfulAnimationDurationSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(150, 12, 270, 24)];
+    self.colorfulAnimationDurationSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(150, 24, 270, 24)];
     self.colorfulAnimationDurationSlider.minValue = 2.0;
     self.colorfulAnimationDurationSlider.maxValue = 60.0;
     self.colorfulAnimationDurationSlider.target = self;
     self.colorfulAnimationDurationSlider.action = @selector(colorfulSliderChanged:);
     [colorfulCard addSubview:self.colorfulAnimationDurationSlider];
+    [self ym_addCupHintLabelsForSlider:self.colorfulAnimationDurationSlider inView:colorfulCard];
 
-    self.basicCard = [self ym_cardViewWithFrame:NSMakeRect(24, 86, 512, 288)];
+    self.basicCard = [self ym_cardViewWithFrame:NSMakeRect(24, 76, 512, 328)];
     NSView *basicCard = self.basicCard;
     [contentView addSubview:basicCard];
 
-    self.enableBlurCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(26, 244, 220, 24)];
+    self.enableBlurCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(26, 284, 220, 24)];
     self.enableBlurCheckbox.buttonType = NSSwitchButton;
     self.enableBlurCheckbox.title = @"启用背景模糊";
     self.enableBlurCheckbox.font = [NSFont systemFontOfSize:14 weight:NSFontWeightMedium];
     self.enableBlurCheckbox.target = self;
     self.enableBlurCheckbox.action = @selector(liveThemeControlChanged:);
     [basicCard addSubview:self.enableBlurCheckbox];
-    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(48, 222, 420, 18)
+    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(48, 262, 420, 18)
                                             text:@"开启后让窗口背后的桌面产生柔和虚化；关闭后仅保留界面透明。"
                                             font:[NSFont systemFontOfSize:11 weight:NSFontWeightRegular]
                                            color:[NSColor colorWithCalibratedWhite:0.62 alpha:1.0]]];
 
-    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 186, 120, 20)
+    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 224, 120, 20)
                                             text:@"界面透明度"
                                             font:[NSFont systemFontOfSize:13 weight:NSFontWeightMedium]
                                            color:[NSColor colorWithCalibratedWhite:0.92 alpha:1.0]]];
-    self.alphaValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 186, 52, 20)
+    self.alphaValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 224, 52, 20)
                                              text:@"90%"
                                              font:[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightMedium]
                                             color:[NSColor colorWithCalibratedWhite:0.86 alpha:1.0]];
     self.alphaValueLabel.alignment = NSTextAlignmentRight;
     [basicCard addSubview:self.alphaValueLabel];
 
-    self.alphaSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(26, 160, 456, 24)];
+    self.alphaSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(26, 198, 456, 24)];
     self.alphaSlider.minValue = 0.60;
     self.alphaSlider.maxValue = 1.00;
     self.alphaSlider.target = self;
     self.alphaSlider.action = @selector(alphaSliderChanged:);
     [basicCard addSubview:self.alphaSlider];
-    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 140, 456, 18)
+    [self ym_addCupHintLabelsForSlider:self.alphaSlider inView:basicCard];
+    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 164, 456, 18)
                                             text:@"数值越低，底部模糊与流光越明显；推荐 85% ~ 95%。"
                                             font:[NSFont systemFontOfSize:11 weight:NSFontWeightRegular]
                                            color:[NSColor colorWithCalibratedWhite:0.62 alpha:1.0]]];
 
-    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 106, 120, 20)
+    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 116, 120, 20)
                                             text:@"桌面模糊"
                                             font:[NSFont systemFontOfSize:13 weight:NSFontWeightMedium]
                                            color:[NSColor colorWithCalibratedWhite:0.92 alpha:1.0]]];
-    self.blurRadiusValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 106, 52, 20)
+    self.blurRadiusValueLabel = [self ym_labelWithFrame:NSMakeRect(430, 116, 52, 20)
                                                   text:@"10"
                                                   font:[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightMedium]
                                                  color:[NSColor colorWithCalibratedWhite:0.86 alpha:1.0]];
     self.blurRadiusValueLabel.alignment = NSTextAlignmentRight;
     [basicCard addSubview:self.blurRadiusValueLabel];
 
-    self.blurRadiusSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(26, 80, 456, 24)];
+    self.blurRadiusSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(26, 90, 456, 24)];
     self.blurRadiusSlider.minValue = 0;
     self.blurRadiusSlider.maxValue = 80;
     self.blurRadiusSlider.target = self;
     self.blurRadiusSlider.action = @selector(blurRadiusSliderChanged:);
     [basicCard addSubview:self.blurRadiusSlider];
-    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 60, 456, 18)
+    [self ym_addCupHintLabelsForSlider:self.blurRadiusSlider inView:basicCard];
+    [basicCard addSubview:[self ym_labelWithFrame:NSMakeRect(26, 56, 456, 18)
                                             text:@"控制真实桌面背景的虚化程度；推荐 10，过高会丢失背景细节。"
                                             font:[NSFont systemFontOfSize:11 weight:NSFontWeightRegular]
                                            color:[NSColor colorWithCalibratedWhite:0.62 alpha:1.0]]];
@@ -329,6 +334,53 @@ static BOOL YMMistySettingsUseLightAppearanceFromCurrentAppearance(void) {
     label.selectable = NO;
     label.lineBreakMode = NSLineBreakByTruncatingTail;
     return label;
+}
+
+- (void)ym_addCupHintLabelsForSlider:(NSSlider *)slider
+                              inView:(NSView *)containerView
+{
+    if (!slider || !containerView) {
+        return;
+    }
+
+    static NSArray<NSString *> *cupHints = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        cupHints = @[@"中杯", @"大杯", @"特大杯"];
+    });
+
+    CGFloat labelWidth = 64.0;
+    CGFloat labelHeight = 12.0;
+    CGFloat labelY = NSMinY(slider.frame) - labelHeight;
+
+    NSArray<NSNumber *> *labelXValues = @[
+        @(NSMinX(slider.frame)),
+        @(NSMidX(slider.frame) - labelWidth * 0.5),
+        @(NSMaxX(slider.frame) - labelWidth)
+    ];
+
+    for (NSInteger index = 0; index < cupHints.count; index++) {
+        NSNumber *labelXValue = labelXValues[index];
+        NSString *hintText = cupHints[index];
+
+        NSTextField *hintLabel = [self ym_labelWithFrame:NSMakeRect(labelXValue.doubleValue,
+                                                                    labelY,
+                                                                    labelWidth,
+                                                                    labelHeight)
+                                                    text:hintText
+                                                    font:[NSFont systemFontOfSize:10 weight:NSFontWeightRegular]
+                                                   color:[NSColor colorWithCalibratedWhite:0.62 alpha:1.0]];
+
+        if (index == 0) {
+            hintLabel.alignment = NSTextAlignmentLeft;
+        } else if (index == 1) {
+            hintLabel.alignment = NSTextAlignmentCenter;
+        } else {
+            hintLabel.alignment = NSTextAlignmentRight;
+        }
+
+        [containerView addSubview:hintLabel];
+    }
 }
 
 #pragma mark - Adaptive Appearance

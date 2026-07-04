@@ -236,6 +236,11 @@ static YMColorfulBlurBackgroundView *YMFindColorfulBlurBackgroundViewInContainer
 static void YMEnsureColorfulBlurBackgroundInContainer(NSView *container, NSView *qnsView) {
     if (!container || !qnsView) return;
 
+    //过滤掉鼠标放到输入框右上角会开启狂暴模式彩蛋,哈哈哈
+    if ([container.description containsString:@"FramelessMainWindowClassWindow"]) {
+        return;
+    }
+    
     YMColorfulBlurBackgroundView *colorfulView = YMFindColorfulBlurBackgroundViewInContainer(container);
 
     if (!YMColorfulBlurBackgroundEnabled()) {
